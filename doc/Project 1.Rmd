@@ -1,0 +1,197 @@
+---
+title: "Project 1"
+author: "Zehan Wang"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+
+
+This is the Happy Moment data from https://rit-public.github.io/HappyDB/, which "is a collection of happy moments described by individuals experiencing those moments" as the authors explain. These data are the response to the question:
+
+"What made you happy today? Reflect on the past 24 hours, and recall
+three actual events that happened to you that made you happy. Write
+down your happy moment in a complete sentence.
+(Write three such moments.)"
+
+And examples of the responses are like:
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+library(tidyverse)
+library(tidytext)
+library(DT)
+library(scales)
+library(wordcloud)
+library(wordcloud2)
+library(gridExtra)
+library(ngram)
+
+hm_data <- read_csv("../output/processed_moments.csv")
+
+urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv'
+demo_data <- read_csv(urlfile)
+
+hm_data <- hm_data %>%
+  inner_join(demo_data, by = "wid") %>%
+  select(wid,
+         original_hm,
+         gender, 
+         marital, 
+         parenthood,
+         reflection_period,
+         age, 
+         country, 
+         ground_truth_category, 
+         text) %>%
+  mutate(count = sapply(hm_data$text, wordcount)) %>%
+  filter(gender %in% c("m", "f")) %>%
+  filter(marital %in% c("single", "married")) %>%
+  filter(parenthood %in% c("n", "y")) %>%
+  filter(reflection_period %in% c("24h", "3m")) %>%
+  mutate(reflection_period = fct_recode(reflection_period, 
+                                        months_3 = "3m", hours_24 = "24h"))
+
+hm_data$original_hm[1:3]
+```
+
+And by the data cleaning progress in https://github.com/TZstatsADS/ADS_Teaching/blob/master/Projects_StarterCodes/Project1-RNotebook/doc/Text_Processing.Rmd, we have a cleaned version data which also fliter out some stopwords, such as "happy","ago","yesterday", etc, that show up a lot but wouldn't help us to determine the happy moments for one in his or her response.
+
+In this project, I would look deeper to the response difference among different age. How would people's happy moment change as they get older?
+First, we could have a general look on our data.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+
+wc_f<- function(input, begin, end, sca){
+  wordcloud(input$word[begin:end], input$n[begin:end], colors = 1:3, random.order = FALSE, random.color = FALSE, rot.per = 0, scale = sca)
+}
+
+
+bag_of_words <-  hm_data %>%
+  unnest_tokens(word, text)
+
+word_count <- bag_of_words %>%
+  count(word, sort = TRUE)
+
+wordcloud2(slice(word_count, 1:100), rotateRatio = 0, size= 0.6)
+```
+
+The bigger the word is in our word cloud, the higher that word's frequency is in the response. We could see that "friend", "time", "family", etc, have large portion in our graph which means those words are frequently appear. Let us see the 10 most frequently appear words in our data.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+wc<- as.data.frame(word_count)
+ggplot(wc[1:10,], aes(x=reorder(word,-n),y = n)) +
+  geom_bar(stat = "identity")+
+  labs(x="word")
+
+```
+
+We could notice "friend", "day", "time" are three words that have much higher frequencies than others, even in the top 10 frequency words. And these 10 words make sense to explain people's happyness, like "family": "I spent my time with my family", or "found" and "finally": "I finally found my wallet which I thought I lost". We could imagine the stories behind these words. Then how would these words differ among people with different age? 
+
+We divide our data into three age group: Young (under 30), Middle Age (from 30 to 60), Aged (beyond 60).
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+hm_young<- hm_data[hm_data[,"age"]<30,]
+hm_middle<- hm_data[as.logical((hm_data[,"age"]>=30) * (hm_data[,"age"]< 60)),]
+hm_aged<- hm_data[hm_data[,"age"]>=60,]
+
+n_y<- nrow(hm_young)
+n_m<- nrow(hm_middle)
+n_a<- nrow(hm_aged)
+pie(c(n_y, n_m, n_a), labels = c("Young(under 30) 49.9%", "Middle Age(30~60) 48.0%", "Aged(Beyond 60) 2.1%"))
+
+
+bow_young <-  hm_young %>%
+  unnest_tokens(word, text)
+wc_young <- bow_young %>%
+  count(word, sort = TRUE)
+
+bow_middle <-  hm_middle %>%
+  unnest_tokens(word, text)
+wc_middle <- bow_middle %>%
+  count(word, sort = TRUE)
+
+bow_aged <-  hm_aged %>%
+  unnest_tokens(word, text)
+wc_aged <- bow_aged %>%
+  count(word, sort = TRUE)
+
+
+```
+
+We could see that the Young and the Middle Age groups have relatively close portions and both have almost a half of the data. This is a result we could expect since the data are collected from a task given by Amazon¡¯s Mechanical Turk(AMT). And AMT provide the task(question) by Internet which the aged people are less likely to use and thus less like to provide their happy moments. But we still have about 2000 responses from aged people which are sufficient for us to have an idea about their happiness.   
+
+Now let us see the happy moments for these three groups.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+par(mfrow=c(1,3))
+wc_f(wc_young, 1, 60, c(3,0.5))
+wc_f(wc_middle, 1, 60, c(3,0.5))
+wc_f(wc_aged, 1, 60, c(3,0.5))
+
+
+p1<-ggplot(as.data.frame(wc_young)[1:10,], aes(x=reorder(word,n),y = n)) +
+  geom_bar(stat = "identity")+
+  labs(x="word", y="47188 obs")+
+  coord_flip()+
+  ggtitle("Young(under 30)")
+p2<-ggplot(as.data.frame(wc_middle)[1:10,], aes(x=reorder(word,n),y = n)) +
+  geom_bar(stat = "identity")+
+  labs(x="word", y="45395 obs")+
+  coord_flip()+
+  ggtitle("Middle Age(30~60)")
+p3<-ggplot(as.data.frame(wc_aged)[1:10,], aes(x=reorder(word,n),y = n)) +
+  geom_bar(stat = "identity")+
+  labs(x="word", y="2057 obs")+
+  coord_flip()+
+  ggtitle("Aged(Beyond 60)")
+grid.arrange(p1, p2, p3, nrow=1)
+```
+
+As the graphs show above, again, "friend", "day", "time" are the three words that appear most frequently. But it would be better to put the words "day" and "time" aside if we want to see how these three age groups would differ among their happy moments and these two words don't provide much information. Let us see the word frequency without "day" and "time".
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+par(mfrow=c(1,3))
+wordcloud(wc_young$word[c(1,4:60)], wc_young$n[c(1,4:60)], colors = 1:3, random.order = FALSE, random.color = FALSE, rot.per = 0, scale = c(3,0.5))
+wc_f(wc_middle, 3, 60, c(3,0.5))
+wc_f(wc_aged, 3, 60, c(3,0.5))
+
+
+p1<-ggplot(as.data.frame(wc_young)[c(1, 4:12),], aes(x=reorder(word,n),y = n)) +
+  geom_bar(stat = "identity")+
+  labs(x="word", y="47188 obs")+
+  coord_flip()+
+  ggtitle("Young(under 30)")
+p2<-ggplot(as.data.frame(wc_middle)[3:12,], aes(x=reorder(word,n),y = n)) +
+  geom_bar(stat = "identity")+
+  labs(x="word", y="45395 obs")+
+  coord_flip()+
+  ggtitle("Middle Age(30~60)")
+p3<-ggplot(as.data.frame(wc_aged)[3:12,], aes(x=reorder(word,n),y = n)) +
+  geom_bar(stat = "identity")+
+  labs(x="word", y="2057 obs")+
+  coord_flip()+
+  ggtitle("Aged(Beyond 60)")
+grid.arrange(p1, p2, p3, nrow=1)
+```
+
+In generally, for the Young group, we could see distinctive word such as "feel", "enjoyed", and "game", which would be related with their friends or some self entertainment -- many of them might not married and don't have a child, it is reasonable that most of their happy moments are time that spend with their friends. For the Middle Age group, words like "son", "daughter", and "wife" begin to show up. And since most of them are working in the day, "night" as the spare time that could stay with family or have some relax time also more related to the happy moments than other groups do. For the aged group, instead of using the general word "family", it seems they are more likely to specify which family member they have happy moments with. And we could also see "called" and "visit"-- maybe a phone call from old friend, or maybe a visit from children who would busy in week day. 
+
+As the previous graphy, "friend" are still the most frequently mentioned word. Especially for the Young group, compare to the Middle Age group which have similar size,  the word "friend" is mentioned 2000 times more in Young group than the second group does. This shows that the young people put a strong portion of their daily life to stay or hang out with their friends for happiness. For the Aged group, although the word "friend" does higher a bit then the words "wife" and "husband", but this does not mean the concept "spouse" has less frequency in happy moments compare to the concept "friend". On the contrary, since both male and female would talk about "friend", while normally one's spouse would only be "wife" or "husband", when we compare the concept of "spouse" and "friend", we should add the frequency of "husband" and "wife" together as the "spouse"'s frequency, which, according to the graph, have a higher frequency than "friend". Similarly, the idea of "children", as the sum of "son" and "daughter", are more frequently showing up in happy moments than "friend" for the Aged group, and almost same frequency for Middle Age group.
+
+Now we could see a trend as one growing up: their happy moments are more and more about their family. We do see "family" as the second most frequently words here for the Young group, but notice there is a great gap between "family" and "friend" as showed above. And for the two elder groups, they have "son", "daughter", "wife", and "husband", which all these four are about their family. Similar as we compre the concept of "spouse" and "friend", when we compare the idea of "family" and "friend", we should add all those four words as "family"(actually we should also add other related words, such as "grandson", as word "family", but since they don't have such high frequencies, we would only consider those  words showing up in top 10 frequency). 
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+names<- c("Young", "Middle Age", "Aged", "Young", "Middle Age", "Aged")
+ff<- c(5978/47188, 4185/45395, 162/2057, 2192/47188, (2371+2345+2242+1776)/45395, (141+117+117+107)/2057)
+mybar<-barplot(ff, names.arg=names, col = c(rgb(0.3,0.1,0.4,0.6) , rgb(0.3,0.5,0.4,0.6) , rgb(0.3,0.9,0.4,0.6)), ylim = c(0, 0.3))
+abline(v=3.7 , col="grey")
+text(2, 0.28, labels = "Friend")
+text(5.4, 0.28, labels = "Family")
+text(mybar, ff+0.02, paste(round(ff,3)))
+```
+
+After we sum the frequency, by the graph, when comparing concept "Friend" and "Family", both the Middle Age and the aged group mentioned more about their "family" than "friend" in happy moments. This discover match our impression, the young are more likely to hang out with friends or join some fun parties; as they grow and married, they would have a lot happy time with their spouse and children; as they become older or even retired, they would have much more friends as they living much longer, but they have more happr moments with their children and spouse, with their family.  
+
+
